@@ -932,6 +932,68 @@ public class PKCS12KeyStoreSpi
                                 keys.put("unmarked", privKey);
                             }
                         }
+                        else if (b.getBagId().equals(keyBag))
+                        {
+                            org.spongycastle.asn1.pkcs.PrivateKeyInfo kInfo = org.spongycastle.asn1.pkcs.PrivateKeyInfo.getInstance(b.getBagValue());
+                            PrivateKey privKey = BouncyCastleProvider.getPrivateKey(kInfo);
+
+                            //
+                            // set the attributes on the key
+                            //
+                            PKCS12BagAttributeCarrier bagAttr = (PKCS12BagAttributeCarrier)privKey;
+                            String alias = null;
+                            ASN1OctetString localId = null;
+
+                            Enumeration e = b.getBagAttributes().getObjects();
+                            while (e.hasMoreElements())
+                            {
+                                ASN1Sequence sq = ASN1Sequence.getInstance(e.nextElement());
+                                ASN1ObjectIdentifier aOid = ASN1ObjectIdentifier.getInstance(sq.getObjectAt(0));
+                                ASN1Set attrSet = ASN1Set.getInstance(sq.getObjectAt(1));
+                                ASN1Primitive attr = null;
+
+                                if (attrSet.size() > 0)
+                                {
+                                    attr = (ASN1Primitive)attrSet.getObjectAt(0);
+
+                                    ASN1Encodable existing = bagAttr.getBagAttribute(aOid);
+                                    if (existing != null)
+                                    {
+                                        // OK, but the value has to be the same
+                                        if (!existing.toASN1Primitive().equals(attr))
+                                        {
+                                            throw new IOException(
+                                                "attempt to add existing attribute with different value");
+                                        }
+                                    }
+                                    else
+                                    {
+                                        bagAttr.setBagAttribute(aOid, attr);
+                                    }
+
+                                    if (aOid.equals(pkcs_9_at_friendlyName))
+                                    {
+                                        alias = ((DERBMPString)attr).getString();
+                                        keys.put(alias, privKey);
+                                    }
+                                    else if (aOid.equals(pkcs_9_at_localKeyId))
+                                    {
+                                        localId = (ASN1OctetString)attr;
+                                    }
+                                }
+                            }
+
+                            String name = new String(Hex.encode(localId.getOctets()));
+
+                            if (alias == null)
+                            {
+                                keys.put(name, privKey);
+                            }
+                            else
+                            {
+                                localIds.put(alias, name);
+                            }
+                        }
                         else if (b.getBagId().equals(certBag))
                         {
                             chain.addElement(b);
