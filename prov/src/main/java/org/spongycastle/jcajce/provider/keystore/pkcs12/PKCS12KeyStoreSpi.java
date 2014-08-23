@@ -851,213 +851,132 @@ public class PKCS12KeyStoreSpi
 
             for (int i = 0; i != c.length; i++)
             {
+                // Initialize SafeBag seq depending on content type
+                ASN1Sequence seq;
                 if (c[i].getContentType().equals(data))
                 {
                     ASN1InputStream dIn = new ASN1InputStream(((ASN1OctetString)c[i].getContent()).getOctets());
-                    ASN1Sequence seq = (ASN1Sequence)dIn.readObject();
-
-                    for (int j = 0; j != seq.size(); j++)
-                    {
-                        SafeBag b = SafeBag.getInstance(seq.getObjectAt(j));
-                        if (b.getBagId().equals(pkcs8ShroudedKeyBag))
-                        {
-                            org.spongycastle.asn1.pkcs.EncryptedPrivateKeyInfo eIn = org.spongycastle.asn1.pkcs.EncryptedPrivateKeyInfo.getInstance(b.getBagValue());
-                            PrivateKey privKey = unwrapKey(eIn.getEncryptionAlgorithm(), eIn.getEncryptedData(), password, wrongPKCS12Zero);
-
-                            //
-                            // set the attributes on the key
-                            //
-                            PKCS12BagAttributeCarrier bagAttr = (PKCS12BagAttributeCarrier)privKey;
-                            String alias = null;
-                            ASN1OctetString localId = null;
-
-                            if (b.getBagAttributes() != null)
-                            {
-                                Enumeration e = b.getBagAttributes().getObjects();
-                                while (e.hasMoreElements())
-                                {
-                                    ASN1Sequence sq = (ASN1Sequence)e.nextElement();
-                                    ASN1ObjectIdentifier aOid = (ASN1ObjectIdentifier)sq.getObjectAt(0);
-                                    ASN1Set attrSet = (ASN1Set)sq.getObjectAt(1);
-                                    ASN1Primitive attr = null;
-
-                                    if (attrSet.size() > 0)
-                                    {
-                                        attr = (ASN1Primitive)attrSet.getObjectAt(0);
-
-                                        ASN1Encodable existing = bagAttr.getBagAttribute(aOid);
-                                        if (existing != null)
-                                        {
-                                            // OK, but the value has to be the same
-                                            if (!existing.toASN1Primitive().equals(attr))
-                                            {
-                                                throw new IOException(
-                                                    "attempt to add existing attribute with different value");
-                                            }
-                                        }
-                                        else
-                                        {
-                                            bagAttr.setBagAttribute(aOid, attr);
-                                        }
-                                    }
-
-                                    if (aOid.equals(pkcs_9_at_friendlyName))
-                                    {
-                                        alias = ((DERBMPString)attr).getString();
-                                        keys.put(alias, privKey);
-                                    }
-                                    else if (aOid.equals(pkcs_9_at_localKeyId))
-                                    {
-                                        localId = (ASN1OctetString)attr;
-                                    }
-                                }
-                            }
-
-                            if (localId != null)
-                            {
-                                String name = new String(Hex.encode(localId.getOctets()));
-
-                                if (alias == null)
-                                {
-                                    keys.put(name, privKey);
-                                }
-                                else
-                                {
-                                    localIds.put(alias, name);
-                                }
-                            }
-                            else
-                            {
-                                unmarkedKey = true;
-                                keys.put("unmarked", privKey);
-                            }
-                        }
-                        else if (b.getBagId().equals(keyBag))
-                        {
-                            org.spongycastle.asn1.pkcs.PrivateKeyInfo kInfo = org.spongycastle.asn1.pkcs.PrivateKeyInfo.getInstance(b.getBagValue());
-                            PrivateKey privKey = BouncyCastleProvider.getPrivateKey(kInfo);
-
-                            //
-                            // set the attributes on the key
-                            //
-                            PKCS12BagAttributeCarrier bagAttr = (PKCS12BagAttributeCarrier)privKey;
-                            String alias = null;
-                            ASN1OctetString localId = null;
-
-                            Enumeration e = b.getBagAttributes().getObjects();
-                            while (e.hasMoreElements())
-                            {
-                                ASN1Sequence sq = ASN1Sequence.getInstance(e.nextElement());
-                                ASN1ObjectIdentifier aOid = ASN1ObjectIdentifier.getInstance(sq.getObjectAt(0));
-                                ASN1Set attrSet = ASN1Set.getInstance(sq.getObjectAt(1));
-                                ASN1Primitive attr = null;
-
-                                if (attrSet.size() > 0)
-                                {
-                                    attr = (ASN1Primitive)attrSet.getObjectAt(0);
-
-                                    ASN1Encodable existing = bagAttr.getBagAttribute(aOid);
-                                    if (existing != null)
-                                    {
-                                        // OK, but the value has to be the same
-                                        if (!existing.toASN1Primitive().equals(attr))
-                                        {
-                                            throw new IOException(
-                                                "attempt to add existing attribute with different value");
-                                        }
-                                    }
-                                    else
-                                    {
-                                        bagAttr.setBagAttribute(aOid, attr);
-                                    }
-
-                                    if (aOid.equals(pkcs_9_at_friendlyName))
-                                    {
-                                        alias = ((DERBMPString)attr).getString();
-                                        keys.put(alias, privKey);
-                                    }
-                                    else if (aOid.equals(pkcs_9_at_localKeyId))
-                                    {
-                                        localId = (ASN1OctetString)attr;
-                                    }
-                                }
-                            }
-
-                            String name = new String(Hex.encode(localId.getOctets()));
-
-                            if (alias == null)
-                            {
-                                keys.put(name, privKey);
-                            }
-                            else
-                            {
-                                localIds.put(alias, name);
-                            }
-                        }
-                        else if (b.getBagId().equals(certBag))
-                        {
-                            chain.addElement(b);
-                        }
-                        else
-                        {
-                            System.out.println("extra in data " + b.getBagId());
-                            System.out.println(ASN1Dump.dumpAsString(b));
-                        }
-                    }
+                    seq = (ASN1Sequence)dIn.readObject();
                 }
                 else if (c[i].getContentType().equals(encryptedData))
                 {
                     EncryptedData d = EncryptedData.getInstance(c[i].getContent());
                     byte[] octets = cryptData(false, d.getEncryptionAlgorithm(),
                         password, wrongPKCS12Zero, d.getContent().getOctets());
-                    ASN1Sequence seq = (ASN1Sequence)ASN1Primitive.fromByteArray(octets);
+                    seq = (ASN1Sequence)ASN1Primitive.fromByteArray(octets);
+                }
+                else
+                {
+                    continue;
+                }
 
-                    for (int j = 0; j != seq.size(); j++)
+                for (int j = 0; j != seq.size(); j++)
+                {
+                    SafeBag b = SafeBag.getInstance(seq.getObjectAt(j));
+
+                    if (b.getBagId().equals(certBag))
                     {
-                        SafeBag b = SafeBag.getInstance(seq.getObjectAt(j));
+                        chain.addElement(b);
+                    }
+                    else if (b.getBagId().equals(pkcs8ShroudedKeyBag))
+                    {
+                        org.spongycastle.asn1.pkcs.EncryptedPrivateKeyInfo eIn = org.spongycastle.asn1.pkcs.EncryptedPrivateKeyInfo.getInstance(b.getBagValue());
+                        PrivateKey privKey = unwrapKey(eIn.getEncryptionAlgorithm(), eIn.getEncryptedData(), password, wrongPKCS12Zero);
 
-                        if (b.getBagId().equals(certBag))
+                        //
+                        // set the attributes on the key
+                        //
+                        PKCS12BagAttributeCarrier bagAttr = (PKCS12BagAttributeCarrier)privKey;
+                        String alias = null;
+                        ASN1OctetString localId = null;
+
+                        Enumeration e = b.getBagAttributes().getObjects();
+                        while (e.hasMoreElements())
                         {
-                            chain.addElement(b);
-                        }
-                        else if (b.getBagId().equals(pkcs8ShroudedKeyBag))
-                        {
-                            org.spongycastle.asn1.pkcs.EncryptedPrivateKeyInfo eIn = org.spongycastle.asn1.pkcs.EncryptedPrivateKeyInfo.getInstance(b.getBagValue());
-                            PrivateKey privKey = unwrapKey(eIn.getEncryptionAlgorithm(), eIn.getEncryptedData(), password, wrongPKCS12Zero);
+                            ASN1Sequence sq = (ASN1Sequence)e.nextElement();
+                            ASN1ObjectIdentifier aOid = (ASN1ObjectIdentifier)sq.getObjectAt(0);
+                            ASN1Set attrSet = (ASN1Set)sq.getObjectAt(1);
+                            ASN1Primitive attr = null;
 
-                            //
-                            // set the attributes on the key
-                            //
-                            PKCS12BagAttributeCarrier bagAttr = (PKCS12BagAttributeCarrier)privKey;
-                            String alias = null;
-                            ASN1OctetString localId = null;
-
-                            Enumeration e = b.getBagAttributes().getObjects();
-                            while (e.hasMoreElements())
+                            if (attrSet.size() > 0)
                             {
-                                ASN1Sequence sq = (ASN1Sequence)e.nextElement();
-                                ASN1ObjectIdentifier aOid = (ASN1ObjectIdentifier)sq.getObjectAt(0);
-                                ASN1Set attrSet = (ASN1Set)sq.getObjectAt(1);
-                                ASN1Primitive attr = null;
+                                attr = (ASN1Primitive)attrSet.getObjectAt(0);
 
-                                if (attrSet.size() > 0)
+                                ASN1Encodable existing = bagAttr.getBagAttribute(aOid);
+                                if (existing != null)
                                 {
-                                    attr = (ASN1Primitive)attrSet.getObjectAt(0);
+                                    // OK, but the value has to be the same
+                                    if (!existing.toASN1Primitive().equals(attr))
+                                    {
+                                        throw new IOException(
+                                            "attempt to add existing attribute with different value");
+                                    }
+                                }
+                                else
+                                {
+                                    bagAttr.setBagAttribute(aOid, attr);
+                                }
+                            }
 
-                                    ASN1Encodable existing = bagAttr.getBagAttribute(aOid);
-                                    if (existing != null)
+                            if (aOid.equals(pkcs_9_at_friendlyName))
+                            {
+                                alias = ((DERBMPString)attr).getString();
+                                keys.put(alias, privKey);
+                            }
+                            else if (aOid.equals(pkcs_9_at_localKeyId))
+                            {
+                                localId = (ASN1OctetString)attr;
+                            }
+                        }
+
+                        String name = new String(Hex.encode(localId.getOctets()));
+
+                        if (alias == null)
+                        {
+                            keys.put(name, privKey);
+                        }
+                        else
+                        {
+                            localIds.put(alias, name);
+                        }
+                    }
+                    else if (b.getBagId().equals(keyBag))
+                    {
+                        org.spongycastle.asn1.pkcs.PrivateKeyInfo kInfo = org.spongycastle.asn1.pkcs.PrivateKeyInfo.getInstance(b.getBagValue());
+                        PrivateKey privKey = BouncyCastleProvider.getPrivateKey(kInfo);
+
+                        //
+                        // set the attributes on the key
+                        //
+                        PKCS12BagAttributeCarrier bagAttr = (PKCS12BagAttributeCarrier)privKey;
+                        String alias = null;
+                        ASN1OctetString localId = null;
+
+                        Enumeration e = b.getBagAttributes().getObjects();
+                        while (e.hasMoreElements())
+                        {
+                            ASN1Sequence sq = ASN1Sequence.getInstance(e.nextElement());
+                            ASN1ObjectIdentifier aOid = ASN1ObjectIdentifier.getInstance(sq.getObjectAt(0));
+                            ASN1Set attrSet = ASN1Set.getInstance(sq.getObjectAt(1));
+                            ASN1Primitive attr = null;
+
+                            if (attrSet.size() > 0)
+                            {
+                                attr = (ASN1Primitive)attrSet.getObjectAt(0);
+
+                                ASN1Encodable existing = bagAttr.getBagAttribute(aOid);
+                                if (existing != null)
+                                {
+                                    // OK, but the value has to be the same
+                                    if (!existing.toASN1Primitive().equals(attr))
                                     {
-                                        // OK, but the value has to be the same
-                                        if (!existing.toASN1Primitive().equals(attr))
-                                        {
-                                            throw new IOException(
-                                                "attempt to add existing attribute with different value");
-                                        }
+                                        throw new IOException(
+                                            "attempt to add existing attribute with different value");
                                     }
-                                    else
-                                    {
-                                        bagAttr.setBagAttribute(aOid, attr);
-                                    }
+                                }
+                                else
+                                {
+                                    bagAttr.setBagAttribute(aOid, attr);
                                 }
 
                                 if (aOid.equals(pkcs_9_at_friendlyName))
@@ -1070,91 +989,24 @@ public class PKCS12KeyStoreSpi
                                     localId = (ASN1OctetString)attr;
                                 }
                             }
-
-                            String name = new String(Hex.encode(localId.getOctets()));
-
-                            if (alias == null)
-                            {
-                                keys.put(name, privKey);
-                            }
-                            else
-                            {
-                                localIds.put(alias, name);
-                            }
                         }
-                        else if (b.getBagId().equals(keyBag))
+
+                        String name = new String(Hex.encode(localId.getOctets()));
+
+                        if (alias == null)
                         {
-                            org.spongycastle.asn1.pkcs.PrivateKeyInfo kInfo = org.spongycastle.asn1.pkcs.PrivateKeyInfo.getInstance(b.getBagValue());
-                            PrivateKey privKey = BouncyCastleProvider.getPrivateKey(kInfo);
-
-                            //
-                            // set the attributes on the key
-                            //
-                            PKCS12BagAttributeCarrier bagAttr = (PKCS12BagAttributeCarrier)privKey;
-                            String alias = null;
-                            ASN1OctetString localId = null;
-
-                            Enumeration e = b.getBagAttributes().getObjects();
-                            while (e.hasMoreElements())
-                            {
-                                ASN1Sequence sq = ASN1Sequence.getInstance(e.nextElement());
-                                ASN1ObjectIdentifier aOid = ASN1ObjectIdentifier.getInstance(sq.getObjectAt(0));
-                                ASN1Set attrSet = ASN1Set.getInstance(sq.getObjectAt(1));
-                                ASN1Primitive attr = null;
-
-                                if (attrSet.size() > 0)
-                                {
-                                    attr = (ASN1Primitive)attrSet.getObjectAt(0);
-
-                                    ASN1Encodable existing = bagAttr.getBagAttribute(aOid);
-                                    if (existing != null)
-                                    {
-                                        // OK, but the value has to be the same
-                                        if (!existing.toASN1Primitive().equals(attr))
-                                        {
-                                            throw new IOException(
-                                                "attempt to add existing attribute with different value");
-                                        }
-                                    }
-                                    else
-                                    {
-                                        bagAttr.setBagAttribute(aOid, attr);
-                                    }
-
-                                    if (aOid.equals(pkcs_9_at_friendlyName))
-                                    {
-                                        alias = ((DERBMPString)attr).getString();
-                                        keys.put(alias, privKey);
-                                    }
-                                    else if (aOid.equals(pkcs_9_at_localKeyId))
-                                    {
-                                        localId = (ASN1OctetString)attr;
-                                    }
-                                }
-                            }
-
-                            String name = new String(Hex.encode(localId.getOctets()));
-
-                            if (alias == null)
-                            {
-                                keys.put(name, privKey);
-                            }
-                            else
-                            {
-                                localIds.put(alias, name);
-                            }
+                            keys.put(name, privKey);
                         }
                         else
                         {
-                            System.out.println("extra in encryptedData " + b.getBagId());
-                            System.out.println(ASN1Dump.dumpAsString(b));
+                            localIds.put(alias, name);
                         }
                     }
-                }
-                else
-                {
-                    System.out.println("extra " + c[i].getContentType().getId());
-                    System.out.println("extra " + ASN1Dump.dumpAsString(c[i].getContent()));
+                    else
+                    {
+                        System.out.println("extra in data " + b.getBagId());
+                        System.out.println(ASN1Dump.dumpAsString(b));
+                    }
                 }
             }
         }
